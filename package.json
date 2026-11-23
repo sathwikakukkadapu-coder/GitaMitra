@@ -4,6 +4,9 @@
   "description": "GitaMitra - Multilingual Bhagavad Gita Learning Platform",
   "type": "module",
   "main": "server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
     "start": "node server.js",
     "setup-db": "node scripts/setup-database.js",
