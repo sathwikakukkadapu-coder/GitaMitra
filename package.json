@@ -8,7 +8,9 @@
     "start": "node server.js",
     "setup-db": "node scripts/setup-database.js",
     "validate": "node scripts/validate-corpus.js",
-    "test": "node scripts/test-all.js"
+    "test": "node scripts/test-all.js",
+    "test-persistence": "node scripts/test-persistence.js",
+    "backup": "node scripts/backup-db.js"
   },
   "keywords": [
     "bhagavad-gita",

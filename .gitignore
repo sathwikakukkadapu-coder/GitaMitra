@@ -4,3 +4,6 @@ Thumbs.db
 *.log
 .env
 .env.local
+*.db-shm
+*.db-wal
+data/backups/

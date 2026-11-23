@@ -521,6 +521,23 @@
   let currentVerse = Number(localStorage.getItem("gm_last_verse")) || 1;
   let activeLang = localStorage.getItem("gm_language") || "en";
 
+  // Authentication & Persistent Progress State
+  let currentUser = null;
+  let authToken = localStorage.getItem("gm_auth_token") || null;
+  let syncStatus = "local"; // 'local' | 'syncing' | 'synced' | 'offline'
+  let pendingVerificationEmail = "";
+
+  // Completed verses (set of "ch.ve")
+  let completedVerses = [];
+  try {
+    completedVerses = JSON.parse(localStorage.getItem("gm_completed_verses") || "[]");
+  } catch (_) { completedVerses = []; }
+
+  let completedChapters = [];
+  try {
+    completedChapters = JSON.parse(localStorage.getItem("gm_completed_chapters") || "[]");
+  } catch (_) { completedChapters = []; }
+
   // Local storage for bookmarks and history
   let bookmarks = [];
   try {
@@ -639,14 +656,33 @@
   function updateContinueBanner() {
     const banner = $("#continue-reading-banner");
     const refSpan = $("#continue-verse-ref");
+    const syncBadge = $("#continue-sync-badge");
+    const snippetEl = $("#continue-snippet");
     if (!banner || !refSpan) return;
 
-    if (readingHistory.length > 0) {
-      const last = readingHistory[0];
-      const chMeta = CHAPTERS_META[last.chapter - 1];
-      refSpan.textContent = `Chapter ${last.chapter} (${chMeta?.en || ""}) · Verse ${last.verse}`;
+    if (readingHistory.length > 0 || currentChapter > 1 || currentVerse > 1) {
+      const ch = currentChapter;
+      const ve = currentVerse;
+      const chMeta = CHAPTERS_META[ch - 1];
+      const verse = getVerse(ch, ve);
+
+      refSpan.textContent = `Chapter ${ch}: ${chMeta?.sa || ""} (${chMeta?.en || ""}) · Verse ${ve}`;
+      if (snippetEl && verse) {
+        snippetEl.textContent = `“${(verse.translation || "").slice(0, 95)}…”`;
+      }
+
+      if (syncBadge) {
+        if (currentUser) {
+          syncBadge.className = "continue-sync-pill cloud";
+          syncBadge.innerHTML = `<span class="sync-dot active"></span> ☁ Synced to ${escapeHtml(currentUser.email)}`;
+        } else {
+          syncBadge.className = "continue-sync-pill";
+          syncBadge.textContent = "Local browser progress (Log in to sync)";
+        }
+      }
+
       banner.style.display = "flex";
-      $("#continue-verse-btn").onclick = () => openVerse(last.chapter, last.verse);
+      $("#continue-verse-btn").onclick = () => openVerse(ch, ve);
     } else {
       banner.style.display = "none";
     }
@@ -776,8 +812,10 @@
     localStorage.setItem("gm_last_verse", ve);
 
     recordReadingHistory(ch, ve);
+    syncProgressToCloud(ch, ve);
     populateReaderDropdowns();
     renderCurrentVerse();
+    updateContinueBanner();
     showView("reader");
   }
 
@@ -813,6 +851,21 @@
       bmBtn.querySelector(".bookmark-icon").textContent = isBookmarked ? "★" : "☆";
       bmBtn.querySelector(".util-label").textContent = isBookmarked ? "Saved" : (I18N[activeLang]?.btn_bookmark || "Bookmark");
     }
+
+    // Completed button state
+    const verseKey = `${currentChapter}.${currentVerse}`;
+    const isCompleted = completedVerses.includes(verseKey);
+    const compBtn = $("#mark-completed-btn");
+    if (compBtn) {
+      compBtn.classList.toggle("completed", isCompleted);
+      const compIcon = $("#completed-icon");
+      const compLabel = $("#completed-btn-label");
+      if (compIcon) compIcon.textContent = isCompleted ? "✓" : "○";
+      if (compLabel) compLabel.textContent = isCompleted ? "Completed" : "Mark Completed";
+    }
+
+    // Reader sync indicator
+    renderSyncIndicator();
 
     // Speaker determination
     const speaker = engine.getSpeaker ? engine.getSpeaker(currentChapter, currentVerse, verse.sanskrit) : { sa: "श्रीभगवानुवाच", en: "Lord Krishna said", hi: "श्री भगवान बोले", te: "శ్రీ భగవానుడు పలికెను" };
@@ -1259,27 +1312,43 @@
     }
   });
 
-  // --- 11. LIBRARY VIEW (PROGRESS & BOOKMARKS) ---
+  // --- 11. LIBRARY VIEW (PROGRESS, COMPLETED & BOOKMARKS) ---
   function renderProgressDashboard() {
+    const versesCompletedEl = $("#progress-verses-completed");
     const versesReadEl = $("#progress-verses-read");
     const chaptersTouchedEl = $("#progress-chapters-touched");
     const bookmarksCountEl = $("#progress-bookmarks-count");
     const progressBar = $("#reading-progress-bar");
     const summaryText = $("#progress-summary-text");
     const bmBadge = $("#bookmark-badge-num");
+    const compBadge = $("#completed-badge-num");
     const histBadge = $("#history-badge-num");
+    const cloudStatusEl = $("#library-cloud-status");
 
     const totalRead = versesReadSet.size;
+    const totalCompleted = completedVerses.length;
     const chaptersTouched = new Set(Array.from(versesReadSet).map(s => s.split(".")[0])).size;
-    const pct = Math.min(100, Math.round((totalRead / 701) * 100));
+    const pct = Math.min(100, Math.round((Math.max(totalRead, totalCompleted) / 701) * 100));
 
+    if (versesCompletedEl) versesCompletedEl.textContent = `${totalCompleted} / 701`;
     if (versesReadEl) versesReadEl.textContent = `${totalRead} / 701`;
     if (chaptersTouchedEl) chaptersTouchedEl.textContent = `${chaptersTouched} / 18`;
     if (bookmarksCountEl) bookmarksCountEl.textContent = bookmarks.length;
     if (progressBar) progressBar.style.width = `${pct}%`;
-    if (summaryText) summaryText.textContent = `${pct}% of the complete 701-verse corpus explored. (${totalRead} verses completed across ${chaptersTouched} chapters)`;
+    if (summaryText) summaryText.textContent = `${pct}% of the complete 701-verse corpus studied. (${totalCompleted} verses completed, ${totalRead} studied across ${chaptersTouched} chapters)`;
     if (bmBadge) bmBadge.textContent = bookmarks.length;
+    if (compBadge) compBadge.textContent = totalCompleted;
     if (histBadge) histBadge.textContent = readingHistory.length;
+
+    if (cloudStatusEl) {
+      if (currentUser) {
+        cloudStatusEl.className = "cloud-sync-status-indicator synced";
+        cloudStatusEl.textContent = `☁ Cloud Synced (${currentUser.email})`;
+      } else {
+        cloudStatusEl.className = "cloud-sync-status-indicator";
+        cloudStatusEl.textContent = "☁ Local Browser Storage (Log in to Sync)";
+      }
+    }
   }
 
   function renderLibraryContent(tabType = "bookmarks") {
@@ -1334,6 +1403,50 @@
         });
       });
 
+    } else if (tabType === "completed") {
+      // Completed Verses Tab
+      if (!completedVerses.length) {
+        container.innerHTML = `
+          <div class="empty-library-box">
+            <span>✓</span>
+            <p>You have not marked any verses as completed yet.</p>
+            <small>While reading any verse, click the "Mark Completed" button in the reader to track your completed study milestones.</small>
+          </div>
+        `;
+        return;
+      }
+
+      const list = document.createElement("div");
+      list.className = "library-items-list";
+
+      completedVerses.forEach(ref => {
+        const [c, ve] = ref.split(".").map(Number);
+        const v = getVerse(c, ve);
+        const card = document.createElement("div");
+        card.className = "library-item-card";
+        card.innerHTML = `
+          <div class="lib-item-info">
+            <span class="lib-item-ref" style="color: var(--green);">✓ COMPLETED · CHAPTER ${c}, VERSE ${ve}</span>
+            <div class="lib-item-sa">${escapeHtml(v?.sanskrit.split("\n")[0] || "")}</div>
+            <div class="lib-item-snippet">${escapeHtml((v?.translation || "").slice(0, 110))}...</div>
+          </div>
+          <div class="lib-item-actions">
+            <button class="btn-secondary" data-jump="${c}.${ve}">Review →</button>
+            <button class="lib-remove-btn" data-toggle-comp="${c}.${ve}" title="Unmark completed">✕</button>
+          </div>
+        `;
+        list.appendChild(card);
+      });
+      container.appendChild(list);
+
+      list.querySelectorAll("[data-toggle-comp]").forEach(b => {
+        b.addEventListener("click", () => {
+          const [c, ve] = b.dataset.toggleComp.split(".").map(Number);
+          toggleVerseCompleted(c, ve);
+          renderLibraryContent("completed");
+        });
+      });
+
     } else {
       // Reading History
       if (!readingHistory.length) {
@@ -1373,15 +1486,517 @@
 
   // Library tab buttons
   $("#tab-btn-bookmarks")?.addEventListener("click", () => {
-    $("#tab-btn-bookmarks").classList.add("active");
-    $("#tab-btn-history").classList.remove("active");
+    $$(".library-tabs-nav .lib-tab").forEach(b => b.classList.remove("active"));
+    $("#tab-btn-bookmarks")?.classList.add("active");
     renderLibraryContent("bookmarks");
   });
 
+  $("#tab-btn-completed")?.addEventListener("click", () => {
+    $$(".library-tabs-nav .lib-tab").forEach(b => b.classList.remove("active"));
+    $("#tab-btn-completed")?.classList.add("active");
+    renderLibraryContent("completed");
+  });
+
   $("#tab-btn-history")?.addEventListener("click", () => {
-    $("#tab-btn-history").classList.add("active");
-    $("#tab-btn-bookmarks").classList.remove("active");
+    $$(".library-tabs-nav .lib-tab").forEach(b => b.classList.remove("active"));
+    $("#tab-btn-history")?.classList.add("active");
     renderLibraryContent("history");
+  });
+
+  // --- 11B. AUTHENTICATION & CLOUD SYNC LOGIC ---
+
+  function renderSyncIndicator() {
+    const indicator = $("#reader-sync-indicator");
+    const dot = $("#reader-sync-dot");
+    const text = $("#reader-sync-text");
+    if (!indicator || !dot || !text) return;
+
+    if (currentUser) {
+      indicator.className = "sync-status-badge synced";
+      dot.className = "sync-dot active";
+      if (syncStatus === "syncing") {
+        text.textContent = "Syncing…";
+      } else if (syncStatus === "offline") {
+        text.textContent = "Offline (Saved locally)";
+        indicator.className = "sync-status-badge";
+        dot.className = "sync-dot";
+      } else {
+        text.textContent = "Cloud Synced";
+      }
+    } else {
+      indicator.className = "sync-status-badge";
+      dot.className = "sync-dot";
+      text.textContent = "Local";
+    }
+  }
+
+  function renderAuthUI() {
+    const authBtn = $("#open-auth-btn");
+    const authLabel = $("#auth-btn-label");
+    const profileMenu = $("#user-profile-menu");
+    const profileName = $("#profile-user-name");
+    const profileEmail = $("#profile-user-email");
+    const profileAvatar = $("#profile-avatar-initial");
+    const profilePos = $("#profile-last-pos");
+    const syncLabel = $("#profile-sync-label");
+
+    if (currentUser) {
+      if (authBtn) {
+        authBtn.classList.add("logged-in");
+        authBtn.title = `Logged in as ${currentUser.email}`;
+      }
+      if (authLabel) {
+        const display = currentUser.name || currentUser.email.split("@")[0];
+        authLabel.textContent = display.length > 12 ? display.slice(0, 10) + "…" : display;
+      }
+      if (profileName) profileName.textContent = currentUser.name || "Seeker";
+      if (profileEmail) profileEmail.textContent = currentUser.email;
+      if (profileAvatar) {
+        const initial = (currentUser.name || currentUser.email || "U")[0].toUpperCase();
+        profileAvatar.textContent = initial;
+      }
+      if (profilePos) {
+        const chM = CHAPTERS_META[currentChapter - 1];
+        profilePos.textContent = `Chapter ${currentChapter} (${chM?.sa || ""}) · Verse ${currentVerse}`;
+      }
+      if (syncLabel) syncLabel.textContent = "Cloud Sync Active";
+    } else {
+      if (authBtn) {
+        authBtn.classList.remove("logged-in");
+        authBtn.title = "Log in to synchronize reading progress across devices";
+      }
+      if (authLabel) authLabel.textContent = "Log In / Sync";
+      if (profileMenu) profileMenu.style.display = "none";
+    }
+
+    renderSyncIndicator();
+    updateContinueBanner();
+    renderProgressDashboard();
+  }
+
+  async function syncProgressToCloud(ch = null, ve = null) {
+    if (!authToken || !currentUser) {
+      syncStatus = "local";
+      renderSyncIndicator();
+      return;
+    }
+
+    const c = ch || currentChapter;
+    const v = ve || currentVerse;
+
+    syncStatus = "syncing";
+    renderSyncIndicator();
+
+    try {
+      const resp = await fetch("/api/user/progress", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          current_chapter: c,
+          current_verse: v,
+          completed_verses: completedVerses,
+          completed_chapters: completedChapters,
+          bookmarks: bookmarks,
+          preferred_language: activeLang
+        })
+      });
+
+      if (resp.ok) {
+        syncStatus = "synced";
+      } else {
+        syncStatus = "offline";
+      }
+    } catch (_) {
+      syncStatus = "offline";
+    }
+
+    renderSyncIndicator();
+  }
+
+  async function toggleVerseCompleted(ch, ve) {
+    const ref = `${ch}.${ve}`;
+    const alreadyCompleted = completedVerses.includes(ref);
+
+    if (alreadyCompleted) {
+      completedVerses = completedVerses.filter(r => r !== ref);
+      showToast(`Unmarked BG ${ref} as completed`);
+    } else {
+      completedVerses.push(ref);
+      showToast(`✓ Marked BG ${ref} as completed!`);
+    }
+
+    // Check if chapter is completed
+    const chVerses = getVersesForChapter(ch);
+    const allDone = chVerses.length > 0 && chVerses.every(v => completedVerses.includes(`${ch}.${v.verse}`));
+    if (allDone && !completedChapters.includes(ch)) {
+      completedChapters.push(ch);
+      showToast(`🎉 Congratulations! You completed Chapter ${ch}: ${CHAPTERS_META[ch-1]?.sa}`);
+    } else if (!allDone && completedChapters.includes(ch)) {
+      completedChapters = completedChapters.filter(c => c !== ch);
+    }
+
+    localStorage.setItem("gm_completed_verses", JSON.stringify(completedVerses));
+    localStorage.setItem("gm_completed_chapters", JSON.stringify(completedChapters));
+
+    renderCurrentVerse();
+    renderProgressDashboard();
+
+    // Sync to cloud if authenticated
+    if (authToken) {
+      try {
+        await fetch("/api/user/mark-completed", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ chapter: ch, verse: ve, completed: !alreadyCompleted })
+        });
+        syncProgressToCloud();
+      } catch (_) {}
+    }
+  }
+
+  async function initAuth() {
+    if (!authToken) {
+      renderAuthUI();
+      return;
+    }
+
+    try {
+      const resp = await fetch("/api/auth/me", {
+        headers: { "Authorization": `Bearer ${authToken}` }
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        currentUser = data.user;
+        syncStatus = "synced";
+
+        // Sync cloud progress if present
+        if (data.progress) {
+          const prog = data.progress;
+          if (prog.current_chapter && prog.current_verse) {
+            currentChapter = prog.current_chapter;
+            currentVerse = prog.current_verse;
+            localStorage.setItem("gm_last_chapter", currentChapter);
+            localStorage.setItem("gm_last_verse", currentVerse);
+          }
+
+          // Merge completed verses
+          if (Array.isArray(prog.completed_verses)) {
+            const merged = Array.from(new Set([...completedVerses, ...prog.completed_verses]));
+            completedVerses = merged;
+            localStorage.setItem("gm_completed_verses", JSON.stringify(completedVerses));
+          }
+
+          // Merge completed chapters
+          if (Array.isArray(prog.completed_chapters)) {
+            const mergedCh = Array.from(new Set([...completedChapters, ...prog.completed_chapters]));
+            completedChapters = mergedCh;
+            localStorage.setItem("gm_completed_chapters", JSON.stringify(completedChapters));
+          }
+
+          // Merge bookmarks
+          if (Array.isArray(prog.bookmarks) && prog.bookmarks.length > 0) {
+            const existingKeys = new Set(bookmarks.map(b => `${b.chapter}.${b.verse}`));
+            prog.bookmarks.forEach(b => {
+              if (!existingKeys.has(`${b.chapter}.${b.verse}`)) {
+                bookmarks.push(b);
+              }
+            });
+            localStorage.setItem("gm_bookmarks", JSON.stringify(bookmarks));
+          }
+
+          // Apply preferred language if set
+          if (prog.preferred_language && prog.preferred_language !== activeLang) {
+            applyLanguage(prog.preferred_language);
+          }
+        }
+      } else {
+        // Invalid or expired token
+        authToken = null;
+        currentUser = null;
+        localStorage.removeItem("gm_auth_token");
+      }
+    } catch (_) {
+      // Offline: keep token for later retry
+      syncStatus = "offline";
+    }
+
+    renderAuthUI();
+  }
+
+  // Auth Modal Management
+  let activeAuthTab = "login";
+
+  function openAuthModal(tab = "login") {
+    activeAuthTab = tab;
+    const modal = $("#auth-modal");
+    if (!modal) return;
+
+    $("#auth-form-view").style.display = "block";
+    $("#verification-view").style.display = "none";
+    $("#auth-error-msg").style.display = "none";
+
+    if (tab === "login") {
+      $("#tab-login-btn")?.classList.add("active");
+      $("#tab-signup-btn")?.classList.remove("active");
+      $("#name-field-group").style.display = "none";
+      $("#auth-submit-label").textContent = "Log In";
+      $("#auth-modal-heading").textContent = "Welcome Back to GitaMitra";
+    } else {
+      $("#tab-signup-btn")?.classList.add("active");
+      $("#tab-login-btn")?.classList.remove("active");
+      $("#name-field-group").style.display = "flex";
+      $("#auth-submit-label").textContent = "Create Account";
+      $("#auth-modal-heading").textContent = "Synchronize Your Reading Journey";
+    }
+
+    modal.style.display = "flex";
+    $("#auth-email-input")?.focus();
+  }
+
+  function showVerificationView(email, code = "") {
+    pendingVerificationEmail = email;
+    $("#auth-form-view").style.display = "none";
+    $("#verification-view").style.display = "block";
+    $("#verify-target-email").textContent = email;
+    $("#verify-error-msg").style.display = "none";
+
+    const devAlert = $("#dev-code-alert");
+    const devCodeDisplay = $("#dev-code-display");
+    if (code && devCodeDisplay) {
+      devCodeDisplay.textContent = code;
+      devAlert.style.display = "block";
+    } else {
+      devAlert.style.display = "none";
+    }
+
+    const codeInput = $("#verify-code-input");
+    if (codeInput) {
+      codeInput.value = code || "";
+      codeInput.focus();
+    }
+  }
+
+  function closeAuthModal() {
+    $("#auth-modal").style.display = "none";
+    $("#auth-error-msg").style.display = "none";
+    $("#verify-error-msg").style.display = "none";
+  }
+
+  // Bind Auth Elements
+  $("#open-auth-btn")?.addEventListener("click", e => {
+    e.stopPropagation();
+    if (currentUser) {
+      const menu = $("#user-profile-menu");
+      if (menu) {
+        menu.style.display = menu.style.display === "none" ? "flex" : "none";
+      }
+    } else {
+      openAuthModal("login");
+    }
+  });
+
+  // Close profile menu when clicking outside
+  document.addEventListener("click", e => {
+    if (!e.target.closest("#user-auth-container")) {
+      const menu = $("#user-profile-menu");
+      if (menu) menu.style.display = "none";
+    }
+  });
+
+  $("#close-auth-btn")?.addEventListener("click", closeAuthModal);
+  $("#auth-modal")?.addEventListener("click", e => {
+    if (e.target.id === "auth-modal") closeAuthModal();
+  });
+
+  $("#tab-login-btn")?.addEventListener("click", () => openAuthModal("login"));
+  $("#tab-signup-btn")?.addEventListener("click", () => openAuthModal("signup"));
+
+  // Auth Form Submit (Login / Signup)
+  $("#auth-form")?.addEventListener("submit", async e => {
+    e.preventDefault();
+    const email = $("#auth-email-input")?.value.trim();
+    const password = $("#auth-password-input")?.value;
+    const name = $("#auth-name-input")?.value.trim();
+    const errorEl = $("#auth-error-msg");
+    const submitBtn = $("#auth-submit-btn");
+
+    errorEl.style.display = "none";
+    submitBtn.disabled = true;
+
+    // Collect initial progress from visitor's browser to migrate into cloud account
+    const initialProgress = {
+      chapter: currentChapter,
+      verse: currentVerse,
+      completedVerses,
+      completedChapters,
+      bookmarks,
+      preferredLanguage: activeLang
+    };
+
+    try {
+      if (activeAuthTab === "signup") {
+        const resp = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, name, initialProgress })
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+          throw new Error(data.error || "Signup failed.");
+        }
+
+        showToast("Account created! Please verify your email.");
+        showVerificationView(email, data.verificationCode);
+      } else {
+        // Log in
+        const resp = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, initialProgress })
+        });
+        const data = await resp.json();
+
+        if (resp.status === 403 && data.requiresVerification) {
+          showToast("Please verify your email address to continue.");
+          showVerificationView(email, data.verificationCode);
+          return;
+        }
+
+        if (!resp.ok) {
+          throw new Error(data.error || "Login failed.");
+        }
+
+        // Login success
+        authToken = data.token;
+        currentUser = data.user;
+        localStorage.setItem("gm_auth_token", authToken);
+
+        if (data.progress) {
+          if (data.progress.current_chapter && data.progress.current_verse) {
+            currentChapter = data.progress.current_chapter;
+            currentVerse = data.progress.current_verse;
+            localStorage.setItem("gm_last_chapter", currentChapter);
+            localStorage.setItem("gm_last_verse", currentVerse);
+          }
+          if (Array.isArray(data.progress.completed_verses)) {
+            completedVerses = Array.from(new Set([...completedVerses, ...data.progress.completed_verses]));
+            localStorage.setItem("gm_completed_verses", JSON.stringify(completedVerses));
+          }
+          if (Array.isArray(data.progress.completed_chapters)) {
+            completedChapters = Array.from(new Set([...completedChapters, ...data.progress.completed_chapters]));
+            localStorage.setItem("gm_completed_chapters", JSON.stringify(completedChapters));
+          }
+          if (Array.isArray(data.progress.bookmarks)) {
+            const existingKeys = new Set(bookmarks.map(b => `${b.chapter}.${b.verse}`));
+            data.progress.bookmarks.forEach(b => {
+              if (!existingKeys.has(`${b.chapter}.${b.verse}`)) bookmarks.push(b);
+            });
+            localStorage.setItem("gm_bookmarks", JSON.stringify(bookmarks));
+          }
+        }
+
+        syncStatus = "synced";
+        closeAuthModal();
+        renderAuthUI();
+        showToast(`Welcome back, ${currentUser.name || currentUser.email}! Progress synchronized. ☁`);
+      }
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  // Verify Form Submit
+  $("#verify-form")?.addEventListener("submit", async e => {
+    e.preventDefault();
+    const code = $("#verify-code-input")?.value.trim();
+    const errorEl = $("#verify-error-msg");
+    const submitBtn = $("#verify-submit-btn");
+
+    errorEl.style.display = "none";
+    submitBtn.disabled = true;
+
+    try {
+      const resp = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingVerificationEmail, code })
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        throw new Error(data.error || "Verification failed.");
+      }
+
+      authToken = data.token;
+      currentUser = data.user;
+      localStorage.setItem("gm_auth_token", authToken);
+      syncStatus = "synced";
+
+      closeAuthModal();
+      renderAuthUI();
+      showToast("Email verified! Your reading progress is now permanently synced across devices. ☁✓");
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = "block";
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  // Resend code button
+  $("#resend-code-btn")?.addEventListener("click", async () => {
+    try {
+      const resp = await fetch("/api/auth/resend-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: pendingVerificationEmail })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error);
+
+      if (data.verificationCode) {
+        $("#dev-code-display").textContent = data.verificationCode;
+        $("#dev-code-alert").style.display = "block";
+      }
+      showToast("New verification code sent!");
+    } catch (err) {
+      showToast("Error resending code: " + err.message);
+    }
+  });
+
+  // Back to login button
+  $("#back-to-login-btn")?.addEventListener("click", () => {
+    openAuthModal("login");
+  });
+
+  // Logout button
+  $("#logout-btn")?.addEventListener("click", () => {
+    currentUser = null;
+    authToken = null;
+    syncStatus = "local";
+    localStorage.removeItem("gm_auth_token");
+
+    const menu = $("#user-profile-menu");
+    if (menu) menu.style.display = "none";
+
+    renderAuthUI();
+    showToast("Logged out. Continuing in visitor mode.");
+  });
+
+  // Mark Completed button in Reader
+  $("#mark-completed-btn")?.addEventListener("click", () => {
+    toggleVerseCompleted(currentChapter, currentVerse);
   });
 
   // --- 12. DAILY WISDOM FEATURE ---
@@ -1565,10 +2180,11 @@
   });
 
   // --- 14. INITIALIZATION ---
-  function init() {
+  async function init() {
     console.log(`GitaMitra initialized with ${corpus.length} verses.`);
     applyLanguage(activeLang);
     populateReaderDropdowns();
+    await initAuth();
     updateContinueBanner();
 
     // Check URL hash for direct links (e.g. #2.47 or #ch2)

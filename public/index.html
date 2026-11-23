@@ -36,7 +36,7 @@
         <button data-view="daily" class="nav-link" data-i18n="nav_daily">Daily Wisdom</button>
       </nav>
 
-      <!-- App-wide Language Selector & Search Button -->
+      <!-- App-wide Language Selector, Search & Auth Actions -->
       <div class="header-actions">
         <button class="search-trigger-btn" id="open-search-btn" title="Search Verses (Ctrl+K)">
           <span class="search-icon">🔍</span>
@@ -51,6 +51,33 @@
             <option value="te">తెలుగు (Telugu)</option>
             <option value="sa">संस्कृतम् (Sanskrit)</option>
           </select>
+        </div>
+
+        <!-- User Authentication & Sync Status -->
+        <div class="user-auth-wrap" id="user-auth-container">
+          <button class="auth-btn" id="open-auth-btn" title="Log in to synchronize reading progress across devices">
+            <span class="auth-icon">👤</span>
+            <span class="auth-label" id="auth-btn-label">Log In / Sync</span>
+          </button>
+          
+          <div class="user-profile-menu" id="user-profile-menu" style="display: none;">
+            <div class="profile-header">
+              <span class="profile-avatar" id="profile-avatar-initial">U</span>
+              <div class="profile-details">
+                <strong id="profile-user-name">Seeker</strong>
+                <small id="profile-user-email">seeker@gitamitra.org</small>
+              </div>
+            </div>
+            <div class="profile-sync-status">
+              <span class="sync-dot active"></span>
+              <span id="profile-sync-label">Cloud Sync Active</span>
+            </div>
+            <div class="profile-reading-pos">
+              <small>Last Studied:</small>
+              <strong id="profile-last-pos">Chapter 1, Verse 1</strong>
+            </div>
+            <button class="profile-logout-btn" id="logout-btn">Log Out</button>
+          </div>
         </div>
 
         <button class="menu-toggle" id="mobile-menu-btn" aria-label="Toggle Navigation Menu">☰</button>
@@ -80,6 +107,89 @@
         <div class="modal-empty-state">
           <span>ॐ</span>
           <p data-i18n="search_prompt">Search all 701 verses across 18 chapters by chapter.verse (e.g. 2.47), word meaning, or concept.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication & Email Verification Modal -->
+  <div id="auth-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog auth-dialog">
+      <div class="modal-header">
+        <div class="auth-dialog-title">
+          <span class="auth-om">ॐ</span>
+          <div>
+            <h3 id="auth-modal-heading">Synchronize Your Journey</h3>
+            <small>Preserve reading progress permanently across all your devices</small>
+          </div>
+        </div>
+        <button class="close-modal-btn" id="close-auth-btn" aria-label="Close Authentication">✕</button>
+      </div>
+
+      <!-- Auth Form View (Tabs: Log In / Sign Up) -->
+      <div id="auth-form-view" class="auth-body">
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab active" id="tab-login-btn">Log In</button>
+          <button type="button" class="auth-tab" id="tab-signup-btn">Create Account</button>
+        </div>
+
+        <form id="auth-form" class="auth-form">
+          <div class="auth-field" id="name-field-group" style="display: none;">
+            <label for="auth-name-input">Your Name (Optional)</label>
+            <input type="text" id="auth-name-input" placeholder="e.g. Arjuna">
+          </div>
+
+          <div class="auth-field">
+            <label for="auth-email-input">Email Address</label>
+            <input type="email" id="auth-email-input" placeholder="you@example.com" required autocomplete="email">
+          </div>
+
+          <div class="auth-field">
+            <label for="auth-password-input">Password</label>
+            <input type="password" id="auth-password-input" placeholder="At least 6 characters" required autocomplete="current-password" minlength="6">
+          </div>
+
+          <div id="auth-error-msg" class="auth-alert error-alert" style="display: none;"></div>
+
+          <button type="submit" class="btn-primary auth-submit-btn" id="auth-submit-btn">
+            <span id="auth-submit-label">Log In</span> <span>→</span>
+          </button>
+        </form>
+
+        <div class="auth-footer-notice">
+          <p>✦ <strong>Login is completely optional.</strong> You can read all 18 chapters freely as a visitor. Creating an account saves your completed verses and bookmarks permanently in the cloud so you can continue reading anywhere.</p>
+        </div>
+      </div>
+
+      <!-- Email Verification Screen View -->
+      <div id="verification-view" class="auth-body" style="display: none;">
+        <div class="verification-hero">
+          <span class="verify-icon">✉️</span>
+          <h3>Verify Your Email Address</h3>
+          <p>We've sent a 6-digit confirmation code to <strong id="verify-target-email">you@example.com</strong>.</p>
+        </div>
+
+        <div class="auth-alert info-alert" id="dev-code-alert">
+          <span>Verification Code: <strong id="dev-code-display">------</strong></span>
+        </div>
+
+        <form id="verify-form" class="auth-form">
+          <div class="auth-field">
+            <label for="verify-code-input">Enter 6-Digit Verification Code</label>
+            <input type="text" id="verify-code-input" class="code-input" maxlength="6" placeholder="• • • • • •" required autofocus>
+          </div>
+
+          <div id="verify-error-msg" class="auth-alert error-alert" style="display: none;"></div>
+
+          <button type="submit" class="btn-primary auth-submit-btn" id="verify-submit-btn">
+            <span>Verify & Synchronize Progress</span> <span>✓</span>
+          </button>
+        </form>
+
+        <div class="verification-actions">
+          <button type="button" class="resend-code-btn" id="resend-code-btn">Resend verification code</button>
+          <span>·</span>
+          <button type="button" class="back-to-auth-btn" id="back-to-login-btn">Back to Login</button>
         </div>
       </div>
     </div>
@@ -133,8 +243,12 @@
         <div class="continue-content">
           <span class="continue-icon">🔖</span>
           <div class="continue-text">
-            <strong data-i18n="continue_reading">Continue Your Reading Journey</strong>
+            <div class="continue-header-line">
+              <strong data-i18n="continue_reading">Continue Your Reading Journey</strong>
+              <span class="continue-sync-pill" id="continue-sync-badge">Local progress</span>
+            </div>
             <span id="continue-verse-ref">Chapter 2, Verse 47</span>
+            <small id="continue-snippet" class="continue-snippet"></small>
           </div>
         </div>
         <button id="continue-verse-btn" class="continue-btn" data-i18n="resume_btn">Resume Reading →</button>
@@ -247,6 +361,10 @@
         </div>
 
         <div class="reader-utility-actions">
+          <button id="mark-completed-btn" class="util-btn" title="Toggle verse completion">
+            <span class="completed-icon" id="completed-icon">○</span>
+            <span class="util-label" id="completed-btn-label">Mark Completed</span>
+          </button>
           <button id="bookmark-verse-btn" class="util-btn" title="Bookmark this verse">
             <span class="bookmark-icon">☆</span>
             <span class="util-label" data-i18n="btn_bookmark">Bookmark</span>
@@ -255,6 +373,10 @@
             <span class="copy-icon">📋</span>
             <span class="util-label" data-i18n="btn_copy">Copy</span>
           </button>
+          <div class="sync-status-badge" id="reader-sync-indicator" title="Reading progress status">
+            <span class="sync-dot" id="reader-sync-dot"></span>
+            <span class="sync-text" id="reader-sync-text">Local</span>
+          </div>
         </div>
       </div>
 
@@ -345,8 +467,12 @@
       <div class="progress-dashboard-card">
         <div class="progress-stats-row">
           <div class="stat-box">
+            <span class="stat-number" id="progress-verses-completed">0 / 701</span>
+            <span class="stat-label">Verses Completed</span>
+          </div>
+          <div class="stat-box">
             <span class="stat-number" id="progress-verses-read">0</span>
-            <span class="stat-label" data-i18n="verses_read">Verses Read</span>
+            <span class="stat-label" data-i18n="verses_read">Verses Studied</span>
           </div>
           <div class="stat-box">
             <span class="stat-number" id="progress-chapters-touched">0 / 18</span>
@@ -360,12 +486,16 @@
         <div class="progress-bar-wrap">
           <div class="progress-bar-fill" id="reading-progress-bar" style="width: 0%;"></div>
         </div>
-        <small class="progress-note" id="progress-summary-text">0% of the complete 701-verse corpus explored.</small>
+        <div class="progress-footer-line">
+          <small class="progress-note" id="progress-summary-text">0% of the complete 701-verse corpus explored.</small>
+          <span class="cloud-sync-status-indicator" id="library-cloud-status">☁ Local Browser Storage (Log in to Sync)</span>
+        </div>
       </div>
 
-      <!-- Library Tabs: Bookmarks vs History -->
+      <!-- Library Tabs: Bookmarks vs History vs Completed -->
       <div class="library-tabs-nav">
         <button class="lib-tab active" data-tab="bookmarks" id="tab-btn-bookmarks">Saved Bookmarks (<span id="bookmark-badge-num">0</span>)</button>
+        <button class="lib-tab" data-tab="completed" id="tab-btn-completed">Completed Verses (<span id="completed-badge-num">0</span>)</button>
         <button class="lib-tab" data-tab="history" id="tab-btn-history">Recently Read Verses (<span id="history-badge-num">0</span>)</button>
       </div>
 

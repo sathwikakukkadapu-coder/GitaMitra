@@ -14,6 +14,9 @@ const db = new DatabaseSync(dbPath);
 
 console.log("Setting up GitaMitra SQLite database at:", dbPath);
 
+// Enable WAL mode for high performance and deployment durability
+db.exec("PRAGMA journal_mode = WAL;");
+
 // Create tables
 db.exec(`
   CREATE TABLE IF NOT EXISTS chapters (
@@ -43,6 +46,45 @@ db.exec(`
     UNIQUE(chapter_number, verse_number)
   );
 
+  -- Users Authentication Table
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    name TEXT DEFAULT '',
+    is_verified INTEGER DEFAULT 0,
+    verification_code TEXT,
+    verification_sent_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  -- Persistent User Reading Progress Table
+  CREATE TABLE IF NOT EXISTS user_reading_progress (
+    id TEXT PRIMARY KEY,
+    user_id TEXT UNIQUE NOT NULL,
+    current_chapter INTEGER NOT NULL DEFAULT 1,
+    current_verse INTEGER NOT NULL DEFAULT 1,
+    completed_verses TEXT NOT NULL DEFAULT '[]',
+    completed_chapters TEXT NOT NULL DEFAULT '[]',
+    bookmarks TEXT NOT NULL DEFAULT '[]',
+    preferred_language TEXT NOT NULL DEFAULT 'en',
+    last_read_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  -- Persistent User Reading History Table
+  CREATE TABLE IF NOT EXISTS user_reading_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    chapter_number INTEGER NOT NULL,
+    verse_number INTEGER NOT NULL,
+    read_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE IF NOT EXISTS bookmarks (
     id TEXT PRIMARY KEY,
     chapter_number INTEGER NOT NULL,
@@ -68,6 +110,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_corpus_chapter ON gita_corpus(chapter_number);
   CREATE INDEX IF NOT EXISTS idx_corpus_verse ON gita_corpus(chapter_number, verse_number);
   CREATE INDEX IF NOT EXISTS idx_history_time ON reading_history(read_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+  CREATE INDEX IF NOT EXISTS idx_user_prog_user ON user_reading_progress(user_id);
+  CREATE INDEX IF NOT EXISTS idx_user_hist_user_time ON user_reading_history(user_id, read_at DESC);
 `);
 
 // 18 Chapters metadata with rich multilingual descriptions
